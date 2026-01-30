@@ -1,5 +1,7 @@
 # Getting Started with GitHub Copilot
 
+[![coverage](https://img.shields.io/badge/coverage-100%25-brightgreen?style=for-the-badge)](htmlcov/index.html)
+
 <img src="https://octodex.github.com/images/Professortocat_v2.png" align="right" height="200px" />
 
 Hey norlakin!
