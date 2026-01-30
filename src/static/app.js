@@ -18,7 +18,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // Function to fetch activities from API
   async function fetchActivities() {
     try {
-      const response = await fetch("/activities");
+      const response = await fetch("/activities", { cache: "no-store" });
       const activities = await response.json();
 
       // Clear loading message
@@ -27,7 +27,7 @@ document.addEventListener("DOMContentLoaded", () => {
       activitySelect.innerHTML = '<option value="">-- Select an activity --</option>';
 
       // Populate activities list
-      Object.entries(activities).forEach(([name, details]) => {
+      Object.entries(activities).forEach(([activityName, details]) => {
         const activityCard = document.createElement("div");
         activityCard.className = "activity-card";
 
@@ -36,11 +36,25 @@ document.addEventListener("DOMContentLoaded", () => {
         const participants = details.participants || [];
 
         activityCard.innerHTML = `
-          <h4>${escapeHtml(name)}</h4>
+          <h4>${escapeHtml(activityName)}</h4>
           <p>${escapeHtml(details.description)}</p>
           <p><strong>Schedule:</strong> ${escapeHtml(details.schedule)}</p>
-          <p><strong>Availability:</strong> ${spotsLeft} spots left</p>
+          <p class="availability"><strong>Availability:</strong> <span class="spots-left">${spotsLeft}</span> spots left</p>
         `;
+
+        // Mark activity name on the card for easy lookup
+        activityCard.dataset.activityName = activityName;
+
+        // Small inline spinner (hidden by default)
+        const spinnerWrapper = document.createElement('div');
+        spinnerWrapper.className = 'activity-spinner hidden';
+        spinnerWrapper.innerHTML = '<div class="spinner" aria-hidden="true"></div>';
+        activityCard.appendChild(spinnerWrapper);
+
+        // Subtle overlay shown while the card is loading (hidden by default)
+        const overlay = document.createElement('div');
+        overlay.className = 'activity-overlay hidden';
+        activityCard.appendChild(overlay);
 
         // Create participants section with avatars
         const participantsSection = document.createElement('div');
@@ -109,12 +123,87 @@ document.addEventListener("DOMContentLoaded", () => {
               avatarDiv.appendChild(span);
             }
 
+            // Build left side (avatar + name)
+            const leftGroup = document.createElement('div');
+            leftGroup.style.display = 'flex';
+            leftGroup.style.alignItems = 'center';
+            leftGroup.style.gap = '10px';
+
             const nameSpan = document.createElement('span');
             nameSpan.className = 'participant-name';
             nameSpan.textContent = name || (typeof p === 'string' ? p : '');
 
-            li.appendChild(avatarDiv);
-            li.appendChild(nameSpan);
+            leftGroup.appendChild(avatarDiv);
+            leftGroup.appendChild(nameSpan);
+
+            // Delete button
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'participant-delete';
+            deleteBtn.setAttribute('aria-label', `Unregister ${typeof p === 'string' ? p : (p.email || p.name || '')}`);
+            deleteBtn.title = `Unregister ${typeof p === 'string' ? p : (p.email || p.name || '')}`;
+            deleteBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M3 6h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M8 6v14a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M14 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+
+            deleteBtn.addEventListener('click', async (e) => {
+              e.preventDefault();
+              const participantEmail = typeof p === 'string' ? p : (p.email || p.name || '');
+              if (!participantEmail) {
+                messageDiv.textContent = 'Cannot determine participant email';
+                messageDiv.className = 'error';
+                messageDiv.classList.remove('hidden');
+                setTimeout(() => messageDiv.classList.add('hidden'), 3000);
+                return;
+              }
+
+              if (!confirm(`Remove ${participantEmail} from ${activityName}?`)) return;
+
+              try {
+                // Show spinner and overlay on this activity card
+                const activityCard = li.closest('.activity-card');
+                const activitySpinner = activityCard && activityCard.querySelector('.activity-spinner');
+                const activityOverlay = activityCard && activityCard.querySelector('.activity-overlay');
+                if (activitySpinner) activitySpinner.classList.remove('hidden');
+                if (activityOverlay) activityOverlay.classList.remove('hidden');
+
+                const res = await fetch(
+                  `/activities/${encodeURIComponent(activityName)}/participants?email=${encodeURIComponent(participantEmail)}`,
+                  { method: 'DELETE', cache: 'no-store' }
+                );
+
+                if (res.ok) {
+                  // Refresh activities to reflect changes
+                  await fetchActivities();
+                  messageDiv.textContent = `${participantEmail} removed from ${activityName}`;
+                  messageDiv.className = 'success';
+                  messageDiv.classList.remove('hidden');
+                  setTimeout(() => messageDiv.classList.add('hidden'), 3000);
+                } else {
+                  const json = await res.json().catch(() => ({}));
+                  // Hide spinner and overlay on failure (card remains until refreshed)
+                  if (activitySpinner) activitySpinner.classList.add('hidden');
+                  if (activityOverlay) activityOverlay.classList.add('hidden');
+                  messageDiv.textContent = json.detail || json.message || 'Failed to remove participant';
+                  messageDiv.className = 'error';
+                  messageDiv.classList.remove('hidden');
+                  setTimeout(() => messageDiv.classList.add('hidden'), 3000);
+                }
+              } catch (err) {
+                console.error('Error removing participant:', err);
+                // Hide spinner and overlay on error
+                const activityCard = li.closest('.activity-card');
+                const activitySpinner = activityCard && activityCard.querySelector('.activity-spinner');
+                const activityOverlay = activityCard && activityCard.querySelector('.activity-overlay');
+                if (activitySpinner) activitySpinner.classList.add('hidden');
+                if (activityOverlay) activityOverlay.classList.add('hidden');
+
+                messageDiv.textContent = 'Failed to remove participant. Please try again.';
+                messageDiv.className = 'error';
+                messageDiv.classList.remove('hidden');
+                setTimeout(() => messageDiv.classList.add('hidden'), 3000);
+              }
+            });
+
+            li.appendChild(leftGroup);
+            li.appendChild(deleteBtn);
             ul.appendChild(li);
           });
         }
@@ -127,8 +216,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Add option to select dropdown
         const option = document.createElement("option");
-        option.value = name;
-        option.textContent = name;
+        option.value = activityName;
+        option.textContent = activityName;
         activitySelect.appendChild(option);
       });
     } catch (error) {
@@ -149,16 +238,32 @@ document.addEventListener("DOMContentLoaded", () => {
         `/activities/${encodeURIComponent(activity)}/signup?email=${encodeURIComponent(email)}`,
         {
           method: "POST",
+          cache: "no-store"
         }
       );
 
       const result = await response.json();
 
+      // Find the activity card and show spinner + overlay while signing up
+      const submitBtn = signupForm.querySelector('button[type="submit"]');
+      const activityCard = Array.from(document.querySelectorAll('.activity-card')).find(c => c.dataset.activityName === activity);
+      const activitySpinner = activityCard && activityCard.querySelector('.activity-spinner');
+      const activityOverlay = activityCard && activityCard.querySelector('.activity-overlay');
+      if (activitySpinner) activitySpinner.classList.remove('hidden');
+      if (activityOverlay) activityOverlay.classList.remove('hidden');
+      if (submitBtn) submitBtn.disabled = true;
+
       if (response.ok) {
         messageDiv.textContent = result.message;
         messageDiv.className = "success";
         signupForm.reset();
+        // Refresh list to show new participant
+        fetchActivities();
       } else {
+        // Hide spinner/overlay and re-enable submit
+        if (activitySpinner) activitySpinner.classList.add('hidden');
+        if (activityOverlay) activityOverlay.classList.add('hidden');
+        if (submitBtn) submitBtn.disabled = false;
         messageDiv.textContent = result.detail || "An error occurred";
         messageDiv.className = "error";
       }
@@ -170,6 +275,15 @@ document.addEventListener("DOMContentLoaded", () => {
         messageDiv.classList.add("hidden");
       }, 5000);
     } catch (error) {
+      // Hide spinner/overlay and re-enable submit on error
+      const activityCard = Array.from(document.querySelectorAll('.activity-card')).find(c => c.dataset.activityName === activity);
+      const activitySpinner = activityCard && activityCard.querySelector('.activity-spinner');
+      const activityOverlay = activityCard && activityCard.querySelector('.activity-overlay');
+      if (activitySpinner) activitySpinner.classList.add('hidden');
+      if (activityOverlay) activityOverlay.classList.add('hidden');
+      const submitBtn = signupForm.querySelector('button[type="submit"]');
+      if (submitBtn) submitBtn.disabled = false;
+
       messageDiv.textContent = "Failed to sign up. Please try again.";
       messageDiv.className = "error";
       messageDiv.classList.remove("hidden");
